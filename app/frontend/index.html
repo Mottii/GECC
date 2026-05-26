@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gene Expression Cancer Classifier</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app-shell">
+    <section class="workspace">
+      <div class="toolbar">
+        <div>
+          <h1>Gene Expression Cancer Classifier</h1>
+          <p id="statusText">Checking model artifacts...</p>
+        </div>
+        <button id="reloadBtn" type="button">Reload</button>
+      </div>
+
+      <div class="grid">
+        <section class="panel">
+          <h2>Input</h2>
+          <label for="csvFile">Sample CSV</label>
+          <input type="file" id="csvFile" accept=".csv,text/csv" hidden>
+          <div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-label="Upload CSV file">
+            <div class="drop-title">Drop CSV here</div>
+            <div class="drop-subtitle">or click to browse local files</div>
+          </div>
+
+          <div class="actions">
+            <button id="loadSample" type="button">Load Demo Sample</button>
+            <button id="predictBtn" class="primary" type="button" disabled>Predict</button>
+          </div>
+
+          <div id="inputPreview" class="preview">No sample loaded.</div>
+          <div id="sampleStats" class="stats-grid"></div>
+          <div id="errorBox" class="error" hidden></div>
+        </section>
+
+        <section class="panel result" id="resultCard" hidden>
+          <h2>Result</h2>
+          <div class="prediction-badge" id="predBadge"></div>
+          <div class="confidence" id="confidence"></div>
+
+          <h3>Class Probabilities</h3>
+          <div id="probChart" class="prob-chart"></div>
+
+          <h3>Top Expressed Genes</h3>
+          <div id="topGenes" class="top-genes"></div>
+
+          <h3>AI Insight</h3>
+          <div id="insightSummary" class="insight-summary"></div>
+          <div id="insightList" class="insight-list"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,154 @@
+import argparse
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+import numpy as np
+import torch
+from sklearn.base import clone
+from sklearn.metrics import accuracy_score, f1_score
+from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
+from src.data.preprocess import prepare_full_dataset
+from src.models.baseline import make_baselines
+from src.models.deep_net import CancerClassifierDNN
+from src.training.trainer import Trainer
+from src.utils.config import CV_RESULTS_PATH, RANDOM_STATE
+from src.utils.manifest import write_json_manifest
+from src.utils.reproducibility import set_global_seed
+
+
+def aggregate(values: list[float]) -> dict[str, float]:
+    arr = np.array(values, dtype=np.float64)
+    return {"mean": float(arr.mean()), "std": float(arr.std(ddof=0))}
+
+
+def run_baseline_cv(X: np.ndarray, y: np.ndarray, folds: int, seed: int) -> dict[str, dict]:
+    skf = StratifiedKFold(n_splits=folds, shuffle=True, random_state=seed)
+    results: dict[str, dict] = {}
+    for name, model in make_baselines(random_state=seed).items():
+        accs: list[float] = []
+        f1s: list[float] = []
+        for train_idx, test_idx in skf.split(X, y):
+            pipeline = Pipeline([("scaler", StandardScaler()), ("model", clone(model))])
+            pipeline.fit(X[train_idx], y[train_idx])
+            preds = pipeline.predict(X[test_idx])
+            accs.append(float(accuracy_score(y[test_idx], preds)))
+            f1s.append(float(f1_score(y[test_idx], preds, average="macro")))
+        results[name] = {
+            "accuracy": aggregate(accs),
+            "f1_macro": aggregate(f1s),
+            "fold_accuracies": accs,
+            "fold_f1_macro": f1s,
+        }
+    return results
+
+
+def run_dnn_cv(
+    X: np.ndarray,
+    y: np.ndarray,
+    class_count: int,
+    folds: int,
+    seed: int,
+    epochs: int,
+    batch_size: int,
+) -> dict:
+    skf = StratifiedKFold(n_splits=folds, shuffle=True, random_state=seed)
+    accs: list[float] = []
+    f1s: list[float] = []
+
+    for fold_idx, (train_idx, test_idx) in enumerate(skf.split(X, y), start=1):
+        X_train_fold = X[train_idx]
+        y_train_fold = y[train_idx]
+        X_test_fold = X[test_idx]
+        y_test_fold = y[test_idx]
+
+        X_tr, X_val, y_tr, y_val = train_test_split(
+            X_train_fold,
+            y_train_fold,
+            test_size=0.15,
+            random_state=seed + fold_idx,
+            stratify=y_train_fold,
+        )
+
+        scaler = StandardScaler()
+        X_tr = scaler.fit_transform(X_tr).astype(np.float32)
+        X_val = scaler.transform(X_val).astype(np.float32)
+        X_test_fold = scaler.transform(X_test_fold).astype(np.float32)
+
+        model = CancerClassifierDNN(input_dim=X.shape[1], num_classes=class_count)
+        fold_model_dir = Path(tempfile.mkdtemp(prefix=f"dnn_cv_fold_{fold_idx}_"))
+        trainer = Trainer(model, model_dir=fold_model_dir, seed=seed + fold_idx)
+        trainer.train(X_tr, y_tr, X_val, y_val, epochs=epochs, batch_size=batch_size)
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.load_state_dict(torch.load(fold_model_dir / "deep_net_best.pth", map_location=device))
+        model.to(device)
+        model.eval()
+        with torch.no_grad():
+            logits = model(torch.tensor(X_test_fold, dtype=torch.float32).to(device))
+            preds = logits.argmax(dim=1).cpu().numpy()
+
+        accs.append(float(accuracy_score(y_test_fold, preds)))
+        f1s.append(float(f1_score(y_test_fold, preds, average="macro")))
+        print(f"[DNN CV] Fold {fold_idx}/{folds}: acc={accs[-1]:.4f}, f1_macro={f1s[-1]:.4f}")
+
+    return {
+        "accuracy": aggregate(accs),
+        "f1_macro": aggregate(f1s),
+        "fold_accuracies": accs,
+        "fold_f1_macro": f1s,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run stratified K-fold cross-validation.")
+    parser.add_argument("--folds", type=int, default=5)
+    parser.add_argument("--seed", type=int, default=RANDOM_STATE)
+    parser.add_argument("--dnn-epochs", type=int, default=20)
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--skip-dnn", action="store_true", help="Only evaluate sklearn baselines.")
+    args = parser.parse_args()
+
+    if args.folds < 3:
+        raise ValueError("folds must be >= 3")
+
+    set_global_seed(args.seed)
+    X, y, encoder, feature_names = prepare_full_dataset()
+    print(f"Loaded full dataset: X={X.shape}, classes={list(encoder.classes_)}")
+
+    baseline_results = run_baseline_cv(X, y, folds=args.folds, seed=args.seed)
+    dnn_results = None
+    if not args.skip_dnn:
+        dnn_results = run_dnn_cv(
+            X,
+            y,
+            class_count=len(encoder.classes_),
+            folds=args.folds,
+            seed=args.seed,
+            epochs=args.dnn_epochs,
+            batch_size=args.batch_size,
+        )
+
+    payload = {
+        "seed": args.seed,
+        "folds": args.folds,
+        "feature_count": len(feature_names),
+        "classes": [str(c) for c in encoder.classes_],
+        "baseline_results": baseline_results,
+        "dnn_results": dnn_results,
+    }
+    manifest = write_json_manifest(CV_RESULTS_PATH, payload)
+    print(f"Saved cross-validation report to {CV_RESULTS_PATH}")
+    print(json.dumps({"run_id": manifest["run_id"], "folds": args.folds}, indent=2))
+
+
+if __name__ == "__main__":
+    main()

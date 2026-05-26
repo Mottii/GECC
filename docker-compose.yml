@@ -1,0 +1,11 @@
+services:
+  classifier:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    environment:
+      - PYTHONPATH=/app
+    restart: unless-stopped
