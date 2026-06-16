@@ -2,10 +2,16 @@ const state = {
   features: [],
   sample: null,
   sampleStats: null,
+  pcaReferences: [],
+  patientCoords: null,
+  currentPrediction: null,
+  chatHistory: []
 };
 
+// UI Elements
 const statusText = document.getElementById("statusText");
 const reloadBtn = document.getElementById("reloadBtn");
+const themeToggleBtn = document.getElementById("themeToggleBtn");
 const dropZone = document.getElementById("dropZone");
 const csvFile = document.getElementById("csvFile");
 const loadSample = document.getElementById("loadSample");
@@ -13,13 +19,29 @@ const predictBtn = document.getElementById("predictBtn");
 const inputPreview = document.getElementById("inputPreview");
 const sampleStats = document.getElementById("sampleStats");
 const errorBox = document.getElementById("errorBox");
-const resultCard = document.getElementById("resultCard");
+
+const resultPlaceholder = document.getElementById("resultPlaceholder");
+const resultContent = document.getElementById("resultContent");
 const predBadge = document.getElementById("predBadge");
 const confidence = document.getElementById("confidence");
 const probChart = document.getElementById("probChart");
 const topGenes = document.getElementById("topGenes");
 const insightSummary = document.getElementById("insightSummary");
 const insightList = document.getElementById("insightList");
+
+const chatMessages = document.getElementById("chatMessages");
+const chatInput = document.getElementById("chatInput");
+const sendChatBtn = document.getElementById("sendChatBtn");
+
+let pcaChartInstance = null;
+
+const cohortColors = {
+  "BRCA": "#ec4899", // Pink
+  "KIRC": "#3b82f6", // Blue
+  "COAD": "#10b981", // Green
+  "LUAD": "#f59e0b", // Orange
+  "PRAD": "#8b5cf6"  // Purple
+};
 
 function showError(message) {
   errorBox.textContent = message;
@@ -32,19 +54,51 @@ function clearError() {
 }
 
 function setSample(values, source) {
+  clearPrediction();
   state.sample = values;
   state.sampleStats = summarizeSample(values);
   const expected = state.features.length;
   const exactMatch = expected > 0 && values.length === expected;
   predictBtn.disabled = values.length === 0 || !exactMatch;
 
-  inputPreview.textContent = `${source}
-Features: ${values.length}${expected ? ` (expected ${expected})` : ""}
-Preview: ${values.slice(0, 12).map((v) => Number(v).toFixed(4)).join(", ")}`;
+  inputPreview.textContent = `${source}\nFeatures: ${values.length}${expected ? ` (expected ${expected})` : ""}\nPreview: ${values.slice(0, 12).map((v) => Number(v).toFixed(4)).join(", ")}`;
 
   renderSampleStats(state.sampleStats, expected);
   if (expected && !exactMatch) {
     showError(`Feature count mismatch: got ${values.length}, expected ${expected}.`);
+  }
+}
+
+function clearPrediction() {
+  state.currentPrediction = null;
+  state.patientCoords = null;
+  state.chatHistory = [];
+  
+  chatInput.disabled = true;
+  sendChatBtn.disabled = true;
+  chatInput.value = "";
+  
+  chatMessages.innerHTML = `
+    <div class="chat-bubble model">
+      Hello! I am your AI clinical assistant. Load a sample and click **Predict** to populate its context. I can help you explain the prediction, identify key driving biomarkers, or interpret expression data.
+    </div>
+  `;
+  
+  resultPlaceholder.hidden = false;
+  resultContent.hidden = true;
+  
+  if (pcaChartInstance) {
+    pcaChartInstance.data.datasets = getChartDatasets();
+    pcaChartInstance.update();
+  }
+}
+
+async function loadPcaReference() {
+  try {
+    const res = await fetch("/pca_reference");
+    state.pcaReferences = await res.json();
+  } catch (error) {
+    console.error("Failed to load PCA references:", error);
   }
 }
 
@@ -57,6 +111,9 @@ async function refreshStatus() {
   const featureResponse = await fetch("/features");
   const featureData = await featureResponse.json();
   state.features = featureData.feature_names || [];
+
+  await loadPcaReference();
+  initPcaChart();
 }
 
 function parseCsvRowToNumbers(row) {
@@ -137,9 +194,9 @@ function renderSampleStats(stats, expectedCount) {
     return;
   }
   const rows = [
-    ["Feature Count", `${stats.count}${expectedCount ? ` / ${expectedCount}` : ""}`],
+    ["Features", `${stats.count}${expectedCount ? ` / ${expectedCount}` : ""}`],
     ["Mean", formatNum(stats.mean)],
-    ["Std", formatNum(stats.std)],
+    ["Std Dev", formatNum(stats.std)],
     ["Min", formatNum(stats.min)],
     ["Max", formatNum(stats.max)],
     ["Zeros", `${stats.zeros}`],
@@ -155,6 +212,7 @@ function renderSampleStats(stats, expectedCount) {
     .join("");
 }
 
+// DROPACTION IMPLEMENTATION
 function setupDropZone() {
   dropZone.addEventListener("click", () => csvFile.click());
   dropZone.addEventListener("keydown", (event) => {
@@ -202,7 +260,7 @@ csvFile.addEventListener("change", async () => {
 loadSample.addEventListener("click", () => {
   clearError();
   if (!state.features.length) {
-    showError("No feature list is loaded yet. Train the model first, then reload artifacts.");
+    showError("No feature list is loaded yet. Train the model first, then reload.");
     return;
   }
   const values = state.features.map((_, index) => {
@@ -219,9 +277,9 @@ reloadBtn.addEventListener("click", async () => {
   await refreshStatus();
 });
 
+// PREDICT PIPELINE
 predictBtn.addEventListener("click", async () => {
   clearError();
-  resultCard.hidden = true;
   if (!state.sample) {
     showError("Load a sample first.");
     return;
@@ -240,7 +298,20 @@ predictBtn.addEventListener("click", async () => {
       throw new Error(payload.detail || "Prediction failed.");
     }
 
+    state.currentPrediction = payload;
+    state.patientCoords = payload.pca_coords;
+    
     renderResult(payload);
+    
+    // Update scatter plot with patient coordinates
+    if (pcaChartInstance) {
+      pcaChartInstance.data.datasets = getChartDatasets();
+      pcaChartInstance.update();
+    }
+
+    // Enable Chat Input
+    chatInput.disabled = false;
+    sendChatBtn.disabled = false;
   } catch (error) {
     showError(error.message);
   } finally {
@@ -249,6 +320,9 @@ predictBtn.addEventListener("click", async () => {
 });
 
 function renderResult(result) {
+  resultPlaceholder.hidden = true;
+  resultContent.hidden = false;
+
   predBadge.textContent = result.predicted_class;
   confidence.textContent = `Confidence: ${(result.confidence * 100).toFixed(1)}%`;
 
@@ -273,7 +347,6 @@ function renderResult(result) {
   });
 
   renderInsights(result);
-  resultCard.hidden = false;
 }
 
 function renderInsights(result) {
@@ -313,5 +386,220 @@ function renderInsights(result) {
   insightList.innerHTML = insights.map((item) => `<div class="insight-item">${item}</div>`).join("");
 }
 
+// CHART MANAGEMENT
+function getChartDatasets() {
+  const datasets = [];
+
+  // Group reference points by label
+  const groups = {};
+  state.pcaReferences.forEach(pt => {
+    if (!groups[pt.label]) groups[pt.label] = [];
+    groups[pt.label].push({ x: pt.x, y: pt.y });
+  });
+
+  // Add reference cohorts
+  Object.keys(groups).forEach(label => {
+    datasets.push({
+      label: label,
+      data: groups[label],
+      backgroundColor: cohortColors[label] || "#64748b",
+      pointRadius: 4,
+      pointHoverRadius: 6,
+      opacity: 0.6
+    });
+  });
+
+  // Add patient sample if it exists
+  if (state.patientCoords) {
+    datasets.push({
+      label: "Patient Sample",
+      data: [state.patientCoords],
+      backgroundColor: "#e11d48", // Crimson red
+      borderColor: "#ffffff",
+      borderWidth: 2,
+      pointRadius: 10,
+      pointStyle: "rectRot", // rot square
+      pointHoverRadius: 12,
+      showLine: false
+    });
+  }
+
+  return datasets;
+}
+
+function initPcaChart() {
+  const canvas = document.getElementById("pcaChart");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  if (pcaChartInstance) {
+    pcaChartInstance.destroy();
+  }
+
+  const isDark = document.body.getAttribute("data-theme") === "dark";
+  const textColor = isDark ? "#94a3b8" : "#64748b";
+  const gridColor = isDark ? "#2d3b55" : "#e2e8f0";
+
+  pcaChartInstance = new Chart(ctx, {
+    type: "scatter",
+    data: {
+      datasets: getChartDatasets()
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: "top",
+          labels: {
+            color: textColor,
+            font: { family: "Inter", weight: "600", size: 11 }
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return `${context.dataset.label}: (${context.parsed.x.toFixed(2)}, ${context.parsed.y.toFixed(2)})`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: gridColor },
+          ticks: { color: textColor, font: { family: "Inter" } },
+          title: { display: true, text: "PCA Component 1", color: textColor, font: { weight: "600", family: "Inter" } }
+        },
+        y: {
+          grid: { color: gridColor },
+          ticks: { color: textColor, font: { family: "Inter" } },
+          title: { display: true, text: "PCA Component 2", color: textColor, font: { weight: "600", family: "Inter" } }
+        }
+      }
+    }
+  });
+}
+
+function updateChartColors() {
+  if (!pcaChartInstance) return;
+  const isDark = document.body.getAttribute("data-theme") === "dark";
+  const textColor = isDark ? "#94a3b8" : "#64748b";
+  const gridColor = isDark ? "#2d3b55" : "#e2e8f0";
+
+  pcaChartInstance.options.plugins.legend.labels.color = textColor;
+  pcaChartInstance.options.scales.x.grid.color = gridColor;
+  pcaChartInstance.options.scales.x.ticks.color = textColor;
+  pcaChartInstance.options.scales.x.title.color = textColor;
+  pcaChartInstance.options.scales.y.grid.color = gridColor;
+  pcaChartInstance.options.scales.y.ticks.color = textColor;
+  pcaChartInstance.options.scales.y.title.color = textColor;
+
+  pcaChartInstance.data.datasets = getChartDatasets();
+  pcaChartInstance.update();
+}
+
+// CHAT ASSISTANT
+let bubbleCounter = 0;
+function appendChatBubble(role, text) {
+  const bubbleId = `bubble-${bubbleCounter++}`;
+  const bubble = document.createElement("div");
+  bubble.className = `chat-bubble ${role}`;
+  bubble.id = bubbleId;
+
+  if (role === "model" && text !== "Analyzing...") {
+    bubble.innerHTML = formatMarkdown(text);
+  } else {
+    bubble.textContent = text;
+  }
+
+  chatMessages.appendChild(bubble);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+  return bubbleId;
+}
+
+function removeChatBubble(id) {
+  const bubble = document.getElementById(id);
+  if (bubble) bubble.remove();
+}
+
+function formatMarkdown(text) {
+  let html = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/`(.*?)`/g, '<code>$1</code>')
+    .replace(/\n/g, '<br>');
+
+  // Format bullet lists
+  html = html.replace(/(?:^|<br>)\s*-\s+(.*?)(?=<br>|$)/g, '<li>$1</li>');
+  if (html.includes('<li>')) {
+    html = html.replace(/(<li>.*?<\/li>)+/g, '<ul>$&</ul>');
+  }
+  return html;
+}
+
+async function sendChatMessage() {
+  const message = chatInput.value.trim();
+  if (!message) return;
+
+  chatInput.value = "";
+  appendChatBubble("user", message);
+  state.chatHistory.push({ role: "user", content: message });
+
+  const loadingId = appendChatBubble("model", "Analyzing...");
+
+  try {
+    const response = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: message,
+        history: state.chatHistory,
+        prediction: state.currentPrediction
+      })
+    });
+
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || "Failed to contact AI assistant.");
+    }
+
+    removeChatBubble(loadingId);
+    appendChatBubble("model", payload.reply);
+    state.chatHistory.push({ role: "model", content: payload.reply });
+  } catch (error) {
+    removeChatBubble(loadingId);
+    appendChatBubble("model", `Error: ${error.message}`);
+  }
+}
+
+chatInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    sendChatMessage();
+  }
+});
+sendChatBtn.addEventListener("click", sendChatMessage);
+
+// THEME SELECTION
+function initTheme() {
+  const savedTheme = localStorage.getItem("theme") || "light";
+  document.documentElement.setAttribute("data-theme", savedTheme);
+  document.body.setAttribute("data-theme", savedTheme);
+  themeToggleBtn.textContent = savedTheme === "dark" ? "☀️ Light" : "🌙 Dark";
+}
+
+themeToggleBtn.addEventListener("click", () => {
+  const currentTheme = document.documentElement.getAttribute("data-theme");
+  const nextTheme = currentTheme === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", nextTheme);
+  document.body.setAttribute("data-theme", nextTheme);
+  localStorage.setItem("theme", nextTheme);
+  themeToggleBtn.textContent = nextTheme === "dark" ? "☀️ Light" : "🌙 Dark";
+  updateChartColors();
+});
+
+// STARTUP
+initTheme();
 setupDropZone();
 refreshStatus().catch((error) => showError(error.message));

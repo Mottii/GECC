@@ -34,6 +34,9 @@ def test_inference_engine_predicts_from_temp_artifacts(tmp_path, monkeypatch):
         scaler_path=scaler_path,
         encoder_path=encoder_path,
         features_path=features_path,
+        manifest_path=tmp_path / "manifest.json",
+        pca_reducer_path=tmp_path / "pca_reducer.pkl",
+        pca_reference_path=tmp_path / "pca_reference.json",
         device=torch.device("cpu"),
     )
 

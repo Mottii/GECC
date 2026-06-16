@@ -5,31 +5,38 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Gene Expression Cancer Classifier</title>
   <link rel="stylesheet" href="style.css">
+  <!-- Load Chart.js for 2D Scatter Plot -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
   <main class="app-shell">
     <section class="workspace">
       <div class="toolbar">
         <div>
-          <h1>Gene Expression Cancer Classifier</h1>
+          <h1>🧬 DetectAI</h1>
           <p id="statusText">Checking model artifacts...</p>
         </div>
-        <button id="reloadBtn" type="button">Reload</button>
+        <div class="toolbar-actions">
+          <button id="themeToggleBtn" class="secondary" type="button">🌙 Theme</button>
+          <button id="reloadBtn" class="secondary" type="button">Reload</button>
+        </div>
       </div>
 
       <div class="grid">
+        <!-- COLUMN 1: INPUT & METRICS -->
         <section class="panel">
-          <h2>Input</h2>
+          <h2>Input Profile</h2>
           <label for="csvFile">Sample CSV</label>
           <input type="file" id="csvFile" accept=".csv,text/csv" hidden>
           <div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-label="Upload CSV file">
+            <div class="drop-icon">📤</div>
             <div class="drop-title">Drop CSV here</div>
             <div class="drop-subtitle">or click to browse local files</div>
           </div>
 
           <div class="actions">
-            <button id="loadSample" type="button">Load Demo Sample</button>
-            <button id="predictBtn" class="primary" type="button" disabled>Predict</button>
+            <button id="loadSample" class="secondary" type="button">Load Demo Sample</button>
+            <button id="predictBtn" class="primary" type="button" disabled>🔬 Predict</button>
           </div>
 
           <div id="inputPreview" class="preview">No sample loaded.</div>
@@ -37,20 +44,61 @@
           <div id="errorBox" class="error" hidden></div>
         </section>
 
-        <section class="panel result" id="resultCard" hidden>
-          <h2>Result</h2>
-          <div class="prediction-badge" id="predBadge"></div>
-          <div class="confidence" id="confidence"></div>
+        <!-- COLUMN 2: CLASSIFICATION & PCA VISUALIZATION -->
+        <section class="panel result-panel">
+          <h2>Analysis Results</h2>
+          <div id="resultPlaceholder" class="result-placeholder">
+            <div class="placeholder-icon">🧬</div>
+            <p>Upload a gene expression profile and run prediction to view cohort placement and classification results.</p>
+          </div>
 
-          <h3>Class Probabilities</h3>
-          <div id="probChart" class="prob-chart"></div>
+          <div id="resultContent" hidden>
+            <div class="result-header">
+              <div class="prediction-badge" id="predBadge"></div>
+              <div class="confidence" id="confidence"></div>
+            </div>
 
-          <h3>Top Expressed Genes</h3>
-          <div id="topGenes" class="top-genes"></div>
+            <div class="results-visual-grid">
+              <div>
+                <h3>Class Probabilities</h3>
+                <div id="probChart" class="prob-chart"></div>
+              </div>
 
-          <h3>AI Insight</h3>
-          <div id="insightSummary" class="insight-summary"></div>
-          <div id="insightList" class="insight-list"></div>
+              <div>
+                <h3>Top Expressed Genes</h3>
+                <div id="topGenes" class="top-genes"></div>
+              </div>
+            </div>
+
+            <!-- PCA Plot Container -->
+            <div class="pca-container">
+              <h3>2D PCA Cohort Placement</h3>
+              <p class="pca-caption">Current patient sample (highlighted) mapped against reference cancer type cohorts.</p>
+              <div class="chart-wrapper">
+                <canvas id="pcaChart"></canvas>
+              </div>
+            </div>
+
+            <div class="insight-container">
+              <h3>Metrics Summary</h3>
+              <div id="insightSummary" class="insight-summary"></div>
+              <div id="insightList" class="insight-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- COLUMN 3: AI CLINICAL CHAT -->
+        <section class="panel chat-panel">
+          <h2>AI Clinical Assistant</h2>
+          <div id="chatMessages" class="chat-messages">
+            <div class="chat-bubble model">
+              Hello! I am your AI clinical assistant. Load a sample and click **Predict** to populate its context. I can help you explain the prediction, identify key driving biomarkers, or interpret expression data.
+            </div>
+          </div>
+          <div class="chat-input-container">
+            <input type="text" id="chatInput" placeholder="Ask about this prediction..." disabled>
+            <button id="sendChatBtn" class="primary" type="button" disabled>Send</button>
+          </div>
         </section>
       </div>
     </section>

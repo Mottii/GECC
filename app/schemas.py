@@ -20,3 +20,14 @@ class PredictionResponse(BaseModel):
     low_confidence: bool
     warning: str | None = None
     model_version: str | None = None
+    pca_coords: dict[str, float] = Field(default_factory=dict)
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., description="The user's query.")
+    history: list[dict] = Field(default_factory=list, description="Conversation history.")
+    prediction: dict | None = Field(None, description="Current prediction context.")
+
+
+class ChatResponse(BaseModel):
+    reply: str

@@ -16,6 +16,8 @@ from src.utils.config import (
     MANIFEST_PATH,
     MAX_INPUT_ABS_VALUE,
     MODEL_PATH,
+    PCA_REDUCER_PATH,
+    PCA_REFERENCE_PATH,
     SCALER_PATH,
 )
 
@@ -36,6 +38,8 @@ class CancerInferenceEngine:
         encoder_path: Path = ENCODER_PATH,
         features_path: Path = FEATURES_PATH,
         manifest_path: Path = MANIFEST_PATH,
+        pca_reducer_path: Path = PCA_REDUCER_PATH,
+        pca_reference_path: Path = PCA_REFERENCE_PATH,
         device: torch.device | None = None,
     ):
         self.model_path = Path(model_path)
@@ -43,6 +47,8 @@ class CancerInferenceEngine:
         self.encoder_path = Path(encoder_path)
         self.features_path = Path(features_path)
         self.manifest_path = Path(manifest_path)
+        self.pca_reducer_path = Path(pca_reducer_path)
+        self.pca_reference_path = Path(pca_reference_path)
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model_loaded = False
         self.load_error: str | None = None
@@ -52,6 +58,7 @@ class CancerInferenceEngine:
         self.scaler = None
         self.encoder = None
         self.manifest: dict | None = None
+        self.pca_reducer = None
         self._load_artifacts()
 
     def _missing_artifacts(self) -> list[Path]:
@@ -84,6 +91,13 @@ class CancerInferenceEngine:
             self.model.load_state_dict(state)
             self.model.to(self.device)
             self.model.eval()
+
+            # Load PCA reducer if exists
+            if self.pca_reducer_path.exists():
+                self.pca_reducer = joblib.load(self.pca_reducer_path)
+            else:
+                self.pca_reducer = None
+
             if self.manifest_path.exists():
                 with self.manifest_path.open(encoding="utf-8") as handle:
                     self.manifest = json.load(handle)
@@ -184,6 +198,12 @@ class CancerInferenceEngine:
             for i in top_indices
         ]
 
+        # Calculate PCA coordinates
+        pca_coords = {"x": 0.0, "y": 0.0}
+        if self.pca_reducer is not None:
+            coords = self.pca_reducer.transform(x_scaled)[0]
+            pca_coords = {"x": float(coords[0]), "y": float(coords[1])}
+
         return {
             "predicted_class": pred_class,
             "confidence": round(confidence, 4),
@@ -192,4 +212,5 @@ class CancerInferenceEngine:
             "low_confidence": low_confidence,
             "warning": warning,
             "model_version": self.current_model_version(),
+            "pca_coords": pca_coords,
         }

@@ -120,6 +120,12 @@ def preprocess(
         X_train = scaler.fit_transform(X_train).astype(np.float32)
         X_test = scaler.transform(X_test).astype(np.float32)
 
+    # Fit PCA for 2D visualization
+    from sklearn.decomposition import PCA
+    pca = PCA(n_components=2, random_state=random_state)
+    X_train_pca = pca.fit_transform(X_train).astype(np.float32)
+    X_test_pca = pca.transform(X_test).astype(np.float32)
+
     if save:
         processed_dir.mkdir(parents=True, exist_ok=True)
         artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -130,6 +136,17 @@ def preprocess(
         if scaler is not None:
             joblib.dump(scaler, artifacts_dir / "scaler.pkl")
         joblib.dump(encoder, artifacts_dir / "label_encoder.pkl")
+        
+        # Save PCA reducer & reference coordinates dynamically relative to artifacts_dir
+        joblib.dump(pca, artifacts_dir / "pca_reducer.pkl")
+        
+        ref_points = [
+            {"x": float(coord[0]), "y": float(coord[1]), "label": str(encoder.classes_[y_val_item])}
+            for coord, y_val_item in zip(X_test_pca, y_test)
+        ]
+        with (artifacts_dir / "pca_reference_points.json").open("w", encoding="utf-8") as handle:
+            json.dump(ref_points, handle, indent=2)
+
         with (artifacts_dir / "feature_names.json").open("w", encoding="utf-8") as handle:
             json.dump(feature_names, handle, indent=2)
         print(f"Saved processed data. Train: {X_train.shape}, Test: {X_test.shape}")

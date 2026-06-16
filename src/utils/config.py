@@ -47,6 +47,8 @@ FEATURES_PATH = ARTIFACTS_DIR / "feature_names.json"
 MANIFEST_PATH = ARTIFACTS_DIR / "training_manifest.json"
 CV_RESULTS_PATH = REPORTS_DIR / "cv_results.json"
 TUNING_RESULTS_PATH = REPORTS_DIR / "tuning_results.json"
+PCA_REDUCER_PATH = ARTIFACTS_DIR / "pca_reducer.pkl"
+PCA_REFERENCE_PATH = ARTIFACTS_DIR / "pca_reference_points.json"
 CONFIDENCE_THRESHOLD = 0.75
 MAX_INPUT_ABS_VALUE = 1_000_000.0
 

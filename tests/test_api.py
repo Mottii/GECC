@@ -27,6 +27,7 @@ class FakeEngine:
             "low_confidence": False,
             "warning": None,
             "model_version": "test-run",
+            "pca_coords": {"x": 1.2, "y": -0.8},
         }
 
 
@@ -69,3 +70,30 @@ def test_api_rejects_invalid_values(monkeypatch):
     response = client.post("/predict", json={"sample_id": "S1", "gene_values": [1, 2, 3]})
     assert response.status_code == 422
     assert "must not contain NaN" in response.json()["detail"]
+
+
+def test_api_pca_reference_and_chat(monkeypatch):
+    monkeypatch.setattr(main, "engine", FakeEngine())
+    client = TestClient(main.app)
+
+    # Test /pca_reference
+    pca_response = client.get("/pca_reference")
+    assert pca_response.status_code == 200
+    assert isinstance(pca_response.json(), list)
+
+    # Test /chat
+    chat_payload = {
+        "message": "Explain BRCA result",
+        "history": [],
+        "prediction": {
+            "predicted_class": "BRCA",
+            "confidence": 0.8,
+            "class_probabilities": {"BRCA": 0.8, "KIRC": 0.2},
+            "top_features": [{"gene": "gene_a", "expression": 1.0}],
+            "low_confidence": False
+        }
+    }
+    chat_response = client.post("/chat", json=chat_payload)
+    assert chat_response.status_code == 200
+    assert "reply" in chat_response.json()
+    assert isinstance(chat_response.json()["reply"], str)
