@@ -66,11 +66,20 @@ def get_metadata():
 def predict(payload: ExpressionInput):
     if not engine.model_loaded:
         raise HTTPException(status_code=503, detail=engine.readiness_message())
-    if len(payload.gene_values) != len(engine.feature_names):
-        raise HTTPException(
-            status_code=422,
-            detail=f"Expected {len(engine.feature_names)} features, got {len(payload.gene_values)}",
-        )
+    
+    val = payload.gene_values
+    if isinstance(val, list):
+        if len(val) != len(engine.feature_names) and len(val) != 20531:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Expected {len(engine.feature_names)} features (or 20,531 raw features), got {len(val)}",
+            )
+    elif isinstance(val, dict):
+        if not val:
+            raise HTTPException(status_code=422, detail="gene_values dictionary cannot be empty.")
+    else:
+        raise HTTPException(status_code=422, detail="gene_values must be a list of floats or a dictionary.")
+
     try:
         result = engine.predict(payload.gene_values)
     except ArtifactNotReadyError as exc:
@@ -91,6 +100,18 @@ def get_pca_reference():
         raise HTTPException(status_code=500, detail=f"Failed to load PCA references: {exc}")
 
 
+@app.get("/demo_profiles")
+def get_demo_profiles():
+    from src.utils.config import DEMO_PROFILES_PATH
+    if not DEMO_PROFILES_PATH.exists():
+        return {}
+    try:
+        with DEMO_PROFILES_PATH.open(encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load demo profiles: {exc}")
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest):
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -107,7 +128,9 @@ def chat(payload: ChatRequest):
         f"Model Prediction: {prediction_context.get('predicted_class', 'N/A')}\n"
         f"Confidence: {prediction_context.get('confidence', 0.0)}\n"
         f"Class Probabilities: {prediction_context.get('class_probabilities', {})}\n"
-        f"Top contributing genes: {prediction_context.get('top_features', [])}\n\n"
+        f"Top contributing genes: {prediction_context.get('top_features', [])}\n"
+        f"Suppressed genes: {prediction_context.get('suppressed_features', [])}\n"
+        f"Warning: {prediction_context.get('warning', 'None')}\n\n"
         "Respond directly, concisely, and professionally in markdown format. Do not use generic explanations; "
         "always link the user's questions back to this patient's specific expression levels and cohorts."
     )
@@ -151,31 +174,62 @@ def generate_local_fallback_response(message: str, prediction: dict | None) -> s
             "Hello! I am your AI clinical assistant. Please load a sample and predict its cancer type "
             "so I can analyze the expression data and provide specific insights."
         )
-    
+
     predicted_class = prediction.get("predicted_class", "Unknown")
     confidence = prediction.get("confidence", 0.0)
     top_features = prediction.get("top_features", [])
-    
+    suppressed_features = prediction.get("suppressed_features", [])
+    low_confidence = prediction.get("low_confidence", False)
+    warning = prediction.get("warning")
+    probs = prediction.get("class_probabilities", {})
+
     msg_lower = message.lower()
-    
-    if "gene" in msg_lower or "feature" in msg_lower or "expression" in msg_lower:
-        genes_str = ", ".join([f"{f['gene']} ({f['expression']})" for f in top_features])
+
+    if "suppress" in msg_lower or "negative" in msg_lower or "tumor suppressor" in msg_lower:
+        if suppressed_features:
+            genes_str = ", ".join([f"{f['gene']} (attr: {f.get('attribution', 'N/A')}, expr: {f['expression']})" for f in suppressed_features])
+            return (
+                f"**Suppressed Biomarkers & Tumor Suppressors:**\n"
+                f"For this {predicted_class} sample, key negatively attributing biomarkers include: {genes_str}.\n"
+                f"In oncogenomics, down-regulation of protective tumor suppressors removes critical cell-cycle checkpoints, "
+                f"significantly contributing to malignant phenotype classification."
+            )
+        return f"No strongly suppressed biomarkers were detected for this {predicted_class} profile."
+
+    if "gene" in msg_lower or "feature" in msg_lower or "expression" in msg_lower or "driver" in msg_lower or "biomarker" in msg_lower:
+        pos_str = ", ".join([f"{f['gene']} (expr: {f['expression']}, attr: {f.get('attribution', 'N/A')})" for f in top_features[:3]])
+        neg_str = ", ".join([f"{f['gene']} (expr: {f['expression']}, attr: {f.get('attribution', 'N/A')})" for f in suppressed_features[:2]]) if suppressed_features else "None"
         return (
-            f"For this sample, the top contributing genes detected are: {genes_str}. "
-            f"These highly-expressed genes are characteristic markers that heavily influenced the model "
-            f"to predict **{predicted_class}** with a confidence score of {confidence * 100:.1f}%."
+            f"**Genomic Attribution Analysis for {predicted_class}** (Confidence: {confidence * 100:.1f}%):\n\n"
+            f"- **Top Activating Drivers (Positive Input x Gradient):** {pos_str}\n"
+            f"- **Suppressed Biomarkers (Negative Input x Gradient):** {neg_str}\n\n"
+            f"These biomarkers reflect characteristic oncogenic dysregulations. Attributions combine normalized expression with model gradients to identify true functional drivers."
         )
-    
-    if "confidence" in msg_lower or "certain" in msg_lower or "probabilit" in msg_lower:
-        prob_str = ", ".join([f"{k}: {v*100:.1f}%" for k, v in prediction.get("class_probabilities", {}).items()])
+
+    if "confiden" in msg_lower or "certain" in msg_lower or "probabilit" in msg_lower or "warning" in msg_lower:
+        sorted_probs = sorted(probs.items(), key=lambda item: item[1], reverse=True)
+        prob_str = ", ".join([f"{k}: {v*100:.1f}%" for k, v in sorted_probs])
+        diff_str = ""
+        if len(sorted_probs) >= 2:
+            margin = (sorted_probs[0][1] - sorted_probs[1][1]) * 100
+            diff_str = f"\n- Primary vs Secondary Margin: {margin:.1f}% ({sorted_probs[0][0]} vs {sorted_probs[1][0]})."
+
+        status_note = (
+            "⚠️ **Clinician Alert: Low Confidence / Borderline Call.** Proceed with caution and verify via immunohistochemistry (IHC) or histological biopsy."
+            if low_confidence or warning
+            else "✅ **High Confidence Call:** Cohort separation is statistically distinct."
+        )
         return (
-            f"The model predicted **{predicted_class}** with {confidence * 100:.1f}% confidence. "
-            f"The full cohort probability distribution is: {prob_str}. "
-            + ("This is a high-confidence call." if confidence >= 0.75 else "Note: the confidence is low; proceed with caution.")
+            f"**Model Calibration & Cohort Probabilities:**\n"
+            f"- Predicted Cohort: **{predicted_class}** ({confidence * 100:.1f}% confidence){diff_str}\n"
+            f"- Distribution: {prob_str}\n\n"
+            f"{status_note}"
         )
-        
+
     return (
-        f"I've analyzed the prediction of **{predicted_class}** (confidence: {confidence * 100:.1f}%). "
-        f"The top driving features are {', '.join([f['gene'] for f in top_features[:3]])}. "
-        f"Configure your `GEMINI_API_KEY` in the environment to enable full, dynamic conversational interpretations."
+        f"**Clinical Differential Summary ({predicted_class}):**\n"
+        f"- Confidence: {confidence * 100:.1f}% ({'Uncertain / Borderline' if low_confidence else 'Statistically Robust'})\n"
+        f"- Primary Driver: {top_features[0]['gene'] if top_features else 'N/A'}\n"
+        f"- Key Suppressed Gene: {suppressed_features[0]['gene'] if suppressed_features else 'N/A'}\n"
+        f"Ask about specific driving biomarkers, suppressed tumor suppressors, or cohort probability margins for deeper clinical interpretation."
     )

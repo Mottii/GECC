@@ -26,6 +26,8 @@ const predBadge = document.getElementById("predBadge");
 const confidence = document.getElementById("confidence");
 const probChart = document.getElementById("probChart");
 const topGenes = document.getElementById("topGenes");
+const demoProfileSelect = document.getElementById("demoProfileSelect");
+const suppressedGenes = document.getElementById("suppressedGenes");
 const insightSummary = document.getElementById("insightSummary");
 const insightList = document.getElementById("insightList");
 
@@ -58,14 +60,17 @@ function setSample(values, source) {
   state.sample = values;
   state.sampleStats = summarizeSample(values);
   const expected = state.features.length;
-  const exactMatch = expected > 0 && values.length === expected;
-  predictBtn.disabled = values.length === 0 || !exactMatch;
+  const isMatch = expected > 0 && (values.length === expected || values.length === 20531);
+  predictBtn.disabled = values.length === 0 || !isMatch;
 
-  inputPreview.textContent = `${source}\nFeatures: ${values.length}${expected ? ` (expected ${expected})` : ""}\nPreview: ${values.slice(0, 12).map((v) => Number(v).toFixed(4)).join(", ")}`;
+  const countNote = values.length === 20531
+    ? ` (full raw profile, mapped to ${expected})`
+    : (expected ? ` (expected ${expected})` : "");
+  inputPreview.textContent = `${source}\nFeatures: ${values.length}${countNote}\nPreview: ${values.slice(0, 12).map((v) => Number(v).toFixed(4)).join(", ")}`;
 
   renderSampleStats(state.sampleStats, expected);
-  if (expected && !exactMatch) {
-    showError(`Feature count mismatch: got ${values.length}, expected ${expected}.`);
+  if (expected && !isMatch) {
+    showError(`Feature count mismatch: got ${values.length}, expected ${expected} (or 20,531 raw features).`);
   }
 }
 
@@ -257,18 +262,39 @@ csvFile.addEventListener("change", async () => {
   await handleFile(file);
 });
 
-loadSample.addEventListener("click", () => {
-  clearError();
-  if (!state.features.length) {
-    showError("No feature list is loaded yet. Train the model first, then reload.");
-    return;
+let demoProfilesCache = null;
+
+async function fetchDemoProfiles() {
+  if (demoProfilesCache) return demoProfilesCache;
+  try {
+    const res = await fetch("/demo_profiles");
+    if (res.ok) {
+      demoProfilesCache = await res.json();
+      return demoProfilesCache;
+    }
+  } catch (err) {
+    console.warn("Could not fetch /demo_profiles, trying static file", err);
   }
-  const values = state.features.map((_, index) => {
-    const wave = Math.sin(index / 19) * 0.6;
-    const trend = (index % 17) / 30;
-    return Number((wave + trend).toFixed(5));
-  });
-  setSample(values, "Generated demo sample");
+  try {
+    const res = await fetch("/frontend/demo_profiles.json");
+    demoProfilesCache = await res.json();
+    return demoProfilesCache;
+  } catch (e) {
+    console.error("Failed to load demo profiles", e);
+    return null;
+  }
+}
+
+loadSample.addEventListener("click", async () => {
+  clearError();
+  const selectedKey = demoProfileSelect ? demoProfileSelect.value : "brca";
+  const profiles = await fetchDemoProfiles();
+  if (profiles && profiles[selectedKey]) {
+    const p = profiles[selectedKey];
+    setSample(p.gene_values, `${p.name} — ${p.description}`);
+  } else {
+    showError("Could not load curated demo profile. Please ensure demo_profiles.json is generated.");
+  }
 });
 
 reloadBtn.addEventListener("click", async () => {
@@ -339,12 +365,30 @@ function renderResult(result) {
   });
 
   topGenes.innerHTML = "";
-  result.top_features.forEach((item) => {
+  (result.top_features || []).forEach((item) => {
     const row = document.createElement("div");
     row.className = "gene-row";
-    row.innerHTML = `<span class="gene-name">${item.gene}</span><span class="gene-value">${item.expression}</span>`;
+    const sign = item.attribution > 0 ? "+" : "";
+    const attrText = item.attribution !== undefined && item.attribution !== null ? ` (${sign}${item.attribution.toFixed(3)})` : "";
+    row.innerHTML = `<span class="gene-name">${item.gene}${attrText}</span><span class="gene-value">${item.expression}</span>`;
     topGenes.appendChild(row);
   });
+
+  if (suppressedGenes) {
+    suppressedGenes.innerHTML = "";
+    if (result.suppressed_features && result.suppressed_features.length > 0) {
+      result.suppressed_features.forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "gene-row";
+        const sign = item.attribution > 0 ? "+" : "";
+        const attrText = item.attribution !== undefined && item.attribution !== null ? ` (${sign}${item.attribution.toFixed(3)})` : "";
+        row.innerHTML = `<span class="gene-name" style="color: #ef4444;">${item.gene}${attrText}</span><span class="gene-value">${item.expression}</span>`;
+        suppressedGenes.appendChild(row);
+      });
+    } else {
+      suppressedGenes.innerHTML = '<div style="font-size: 0.8rem; color: #94a3b8; padding: 4px;">No significant suppressors</div>';
+    }
+  }
 
   renderInsights(result);
 }
@@ -368,6 +412,11 @@ function renderInsights(result) {
     .map((entry) => `${entry.gene} (${entry.expression})`)
     .join(", ");
 
+  const suppressedSignal = (result.suppressed_features || [])
+    .slice(0, 2)
+    .map((entry) => `${entry.gene} (${entry.expression})`)
+    .join(", ");
+
   const statSignals = state.sampleStats
     ? `Input spread looks ${state.sampleStats.std > 1.2 ? "broad" : "compact"} (std ${formatNum(state.sampleStats.std)}), with ${state.sampleStats.zeros} zero-value features.`
     : "Input summary is unavailable.";
@@ -375,8 +424,12 @@ function renderInsights(result) {
   const insights = [
     `Class separation: top class ${top1[0]} ${(top1[1] * 100).toFixed(1)}% vs second ${top2[0]} ${(top2[1] * 100).toFixed(1)}% (margin ${(margin * 100).toFixed(1)}%).`,
     statSignals,
-    `Top expression drivers in this sample: ${topGeneSignal || "none available"}.`,
+    `Top activating drivers: ${topGeneSignal || "none available"}.`,
   ];
+
+  if (suppressedSignal) {
+    insights.push(`Suppressed biomarkers / tumor suppressors: ${suppressedSignal}.`);
+  }
 
   if (result.warning) {
     insights.unshift(result.warning);

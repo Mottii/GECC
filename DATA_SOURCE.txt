@@ -1,0 +1,8 @@
+Dataset: TCGA-PANCAN-HiSeq (Gene Expression Cancer RNA-Seq)
+Source: UCI Machine Learning Repository
+URL: https://archive.ics.uci.edu/ml/machine-learning-databases/00401/TCGA-PANCAN-HiSeq-801x20531.tar.gz
+Citation: Weinstein, J. et al. (2013). The Cancer Genome Atlas Pan-Cancer analysis project. Nature Genetics, 45(10), 1113-1120.
+
+To download and prepare the data:
+    python -m src.data.download
+    python scripts/train.py

@@ -101,18 +101,35 @@ def preprocess(
     test_size: float = TEST_SIZE,
     random_state: int = RANDOM_STATE,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, StandardScaler | None, LabelEncoder, list[str]]:
-    X_selected, y_encoded, encoder, feature_names = prepare_full_dataset(
-        raw_dir=raw_dir,
-        top_k_features=top_k_features,
-    )
+    # Step 1: Load raw expression and labels
+    X, y = load_raw_data(raw_dir=raw_dir)
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_selected,
+    encoder = LabelEncoder()
+    y_encoded = encoder.fit_transform(y)
+
+    # Step 2: Split BEFORE feature selection to eliminate data leakage
+    X_train_raw, X_test_raw, y_train, y_test = train_test_split(
+        X,
         y_encoded,
         test_size=test_size,
         random_state=random_state,
         stratify=y_encoded,
     )
+
+    # Step 3: Fit VarianceThreshold strictly on training split
+    selector = VarianceThreshold()
+    selector.fit(X_train_raw)
+    X_train_filtered = X_train_raw.loc[:, selector.get_support()]
+
+    # Step 4: Select top-k variance genes strictly from training split
+    k = min(top_k_features, X_train_filtered.shape[1])
+    variances = X_train_filtered.var(axis=0)
+    top_genes = variances.nlargest(k).index.tolist()
+    feature_names = top_genes
+
+    # Step 5: Transform train and test using the fitted feature set
+    X_train = X_train_filtered[top_genes].to_numpy(dtype=np.float32)
+    X_test = X_test_raw[top_genes].to_numpy(dtype=np.float32)
 
     scaler: StandardScaler | None = None
     if NORMALIZE:
@@ -120,7 +137,7 @@ def preprocess(
         X_train = scaler.fit_transform(X_train).astype(np.float32)
         X_test = scaler.transform(X_test).astype(np.float32)
 
-    # Fit PCA for 2D visualization
+    # Fit PCA for 2D visualization on training data
     from sklearn.decomposition import PCA
     pca = PCA(n_components=2, random_state=random_state)
     X_train_pca = pca.fit_transform(X_train).astype(np.float32)

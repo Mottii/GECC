@@ -8,3 +8,4 @@ __pycache__/
 .DS_Store
 data/raw/
 data/processed/*.npy
+*.zip

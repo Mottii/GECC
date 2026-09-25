@@ -2,15 +2,10 @@ from dataclasses import dataclass
 
 import joblib
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.svm import SVC
-
-try:
-    from xgboost import XGBClassifier
-except Exception:  # pragma: no cover - optional dependency/runtime can be missing in CI.
-    XGBClassifier = None
 
 
 @dataclass
@@ -22,19 +17,11 @@ class BaselineResult:
 
 def make_baselines(random_state: int = 42) -> dict[str, object]:
     models: dict[str, object] = {
-        "logistic_regression": LogisticRegression(max_iter=2000),
+        "logistic_regression": LogisticRegression(max_iter=2000, random_state=random_state),
         "random_forest": RandomForestClassifier(n_estimators=300, random_state=random_state, n_jobs=-1),
         "svm": SVC(kernel="rbf", probability=True, random_state=random_state),
+        "hist_gradient_boosting": HistGradientBoostingClassifier(random_state=random_state, max_iter=100),
     }
-    if XGBClassifier is not None:
-        models["xgboost"] = XGBClassifier(
-            objective="multi:softprob",
-            eval_metric="mlogloss",
-            random_state=random_state,
-            n_estimators=250,
-            max_depth=4,
-            learning_rate=0.05,
-        )
     return models
 
 

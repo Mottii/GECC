@@ -34,8 +34,17 @@
             <div class="drop-subtitle">or click to browse local files</div>
           </div>
 
+          <div class="demo-select-container" style="margin-bottom: 0.75rem;">
+            <label for="demoProfileSelect" style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.25rem;">Curated Patient Profiles</label>
+            <select id="demoProfileSelect" class="dropdown-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color, #cbd5e1); background: var(--bg-card, #fff); color: inherit; font-size: 0.85rem;">
+              <option value="brca">Sample A: Classical BRCA (Breast Carcinoma)</option>
+              <option value="kirc">Sample B: Classical KIRC (Renal Clear Cell)</option>
+              <option value="sample46">Sample C: Ambiguous Sample 46 (LUAD vs BRCA)</option>
+            </select>
+          </div>
+
           <div class="actions">
-            <button id="loadSample" class="secondary" type="button">Load Demo Sample</button>
+            <button id="loadSample" class="secondary" type="button">Load Patient Profile</button>
             <button id="predictBtn" class="primary" type="button" disabled>🔬 Predict</button>
           </div>
 
@@ -65,8 +74,11 @@
               </div>
 
               <div>
-                <h3>Top Expressed Genes</h3>
+                <h3>Driving Biomarkers</h3>
+                <div style="font-size: 0.8rem; font-weight: 600; color: #10b981; margin-bottom: 0.25rem;">Activating Oncogenes (+)</div>
                 <div id="topGenes" class="top-genes"></div>
+                <div style="font-size: 0.8rem; font-weight: 600; color: #ef4444; margin-top: 0.6rem; margin-bottom: 0.25rem;">Suppressed Biomarkers (-)</div>
+                <div id="suppressedGenes" class="top-genes"></div>
               </div>
             </div>
 

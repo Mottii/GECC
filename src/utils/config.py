@@ -49,8 +49,16 @@ CV_RESULTS_PATH = REPORTS_DIR / "cv_results.json"
 TUNING_RESULTS_PATH = REPORTS_DIR / "tuning_results.json"
 PCA_REDUCER_PATH = ARTIFACTS_DIR / "pca_reducer.pkl"
 PCA_REFERENCE_PATH = ARTIFACTS_DIR / "pca_reference_points.json"
+# Calibration & Biological Validation
 CONFIDENCE_THRESHOLD = 0.75
-MAX_INPUT_ABS_VALUE = 1_000_000.0
+MIN_EXPRESSION_VALUE = 0.0
+MAX_EXPRESSION_VALUE = 25.0
+MAX_INPUT_ABS_VALUE = MAX_EXPRESSION_VALUE
+DEFAULT_TEMPERATURE = 3.0
+AUTOENCODER_PATH = MODELS_DIR / "autoencoder.pth"
+OOD_THRESHOLD_PATH = ARTIFACTS_DIR / "ood_threshold.json"
+TEMPERATURE_PATH = ARTIFACTS_DIR / "temperature.json"
+DEMO_PROFILES_PATH = ARTIFACTS_DIR / "demo_profiles.json"
 
 
 def ensure_project_dirs() -> None:

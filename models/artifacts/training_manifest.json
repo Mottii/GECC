@@ -10,7 +10,7 @@
       2000
     ],
     "feature_count": 2000,
-    "feature_hash_sha256": "c4ca8e0c684caf8402c439ce660f203b440c7d1bbe76dd1cffc0377a78559c96",
+    "feature_hash_sha256": "06c46f474a1a180ee33d9f4e06e3ed45e0961c1aaf6363f272ad39173d4d384c",
     "classes": [
       "BRCA",
       "COAD",
@@ -20,10 +20,13 @@
     ]
   },
   "training": {
-    "epochs_configured": null,
+    "epochs_configured": 3,
     "batch_size_configured": null,
-    "epochs_ran": 11,
-    "best_val_acc": 1.0
+    "epochs_ran": 3,
+    "best_val_acc": 0.9895833333333334,
+    "best_val_loss": 0.016005990308409917,
+    "calibrated_temperature": 3.0,
+    "ood_threshold": 0.9977970349788666
   },
   "evaluation": {
     "test_accuracy": 0.9937888198757764,
@@ -31,6 +34,7 @@
   },
   "artifacts": {
     "model_path": "/Users/almazrashid/Documents/ProJ/DetectAI/models/saved/deep_net_best.pth",
+    "autoencoder_path": "/Users/almazrashid/Documents/ProJ/DetectAI/models/saved/autoencoder.pth",
     "manifest_path": "/Users/almazrashid/Documents/ProJ/DetectAI/models/artifacts/training_manifest.json"
   },
   "environment": {
@@ -39,6 +43,6 @@
     "torch": "2.12.0",
     "sklearn": "1.8.0"
   },
-  "created_at_utc": "2026-06-16T14:45:56.554945+00:00",
-  "run_id": "20260616T144556Z"
+  "created_at_utc": "2026-09-25T16:14:20.961610+00:00",
+  "run_id": "20260925T161420Z"
 }

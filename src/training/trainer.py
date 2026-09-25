@@ -7,6 +7,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, TensorDataset
 
+from src.training.callbacks import EarlyStoppingState
 from src.utils.config import (
     BATCH_SIZE,
     EARLY_STOPPING,
@@ -49,11 +50,13 @@ class Trainer:
         if self.seed is not None:
             generator = torch.Generator()
             generator.manual_seed(self.seed)
+        drop_last = len(X_train) > batch_size
         train_loader = DataLoader(
             to_dataset(X_train, y_train),
             batch_size=batch_size,
             shuffle=True,
             generator=generator,
+            drop_last=drop_last,
         )
         val_loader = DataLoader(to_dataset(X_val, y_val), batch_size=batch_size)
         return train_loader, val_loader
@@ -73,8 +76,9 @@ class Trainer:
         optimizer = AdamW(self.model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
         scheduler = CosineAnnealingLR(optimizer, T_max=max(1, epochs))
 
+        best_val_loss = float("inf")
         best_val_acc = 0.0
-        patience_ctr = 0
+        early_stopper = EarlyStoppingState(patience=EARLY_STOPPING, mode="min")
         history = {"train_loss": [], "val_loss": [], "val_acc": []}
         epochs_ran = 0
 
@@ -104,18 +108,18 @@ class Trainer:
                 f"| Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}"
             )
 
-            if val_acc > best_val_acc:
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
                 best_val_acc = val_acc
-                patience_ctr = 0
                 self.model_dir.mkdir(parents=True, exist_ok=True)
                 torch.save(self.model.state_dict(), self.model_dir / "deep_net_best.pth")
-                print(f"  New best model saved (val_acc={val_acc:.4f})")
-            else:
-                patience_ctr += 1
-                if patience_ctr >= EARLY_STOPPING:
-                    print(f"Early stopping at epoch {epoch}")
-                    break
+                print(f"  New best model saved (val_loss={val_loss:.4f}, val_acc={val_acc:.4f})")
 
+            if early_stopper.step(val_loss):
+                print(f"Early stopping at epoch {epoch} (val_loss ceased improving)")
+                break
+
+        history["best_val_loss"] = [best_val_loss]
         history["best_val_acc"] = [best_val_acc]
         history["epochs_ran"] = [epochs_ran]
         return history
