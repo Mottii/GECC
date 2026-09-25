@@ -5,13 +5,22 @@ const state = {
   pcaReferences: [],
   patientCoords: null,
   currentPrediction: null,
-  chatHistory: []
+  chatHistory: [],
+  aiConfig: {
+    provider_name: "auto",
+    api_key: "",
+    model_name: "",
+    base_url: ""
+  },
+  attachedFiles: [],
+  availableProviders: []
 };
 
 // UI Elements
 const statusText = document.getElementById("statusText");
 const reloadBtn = document.getElementById("reloadBtn");
 const themeToggleBtn = document.getElementById("themeToggleBtn");
+const aiSettingsBtn = document.getElementById("aiSettingsBtn");
 const dropZone = document.getElementById("dropZone");
 const csvFile = document.getElementById("csvFile");
 const loadSample = document.getElementById("loadSample");
@@ -34,6 +43,24 @@ const insightList = document.getElementById("insightList");
 const chatMessages = document.getElementById("chatMessages");
 const chatInput = document.getElementById("chatInput");
 const sendChatBtn = document.getElementById("sendChatBtn");
+const chatFileInput = document.getElementById("chatFileInput");
+const attachFileBtn = document.getElementById("attachFileBtn");
+const attachedFilesPreview = document.getElementById("attachedFilesPreview");
+const activeProviderBadge = document.getElementById("activeProviderBadge");
+
+// AI Settings Modal Elements
+const aiSettingsModal = document.getElementById("aiSettingsModal");
+const closeAiModalBtn = document.getElementById("closeAiModalBtn");
+const saveAiSettingsBtn = document.getElementById("saveAiSettingsBtn");
+const resetAiSettingsBtn = document.getElementById("resetAiSettingsBtn");
+const aiProviderSelect = document.getElementById("aiProviderSelect");
+const apiKeyGroup = document.getElementById("apiKeyGroup");
+const aiApiKeyInput = document.getElementById("aiApiKeyInput");
+const aiModelGroup = document.getElementById("aiModelGroup");
+const aiModelInput = document.getElementById("aiModelInput");
+const aiBaseUrlGroup = document.getElementById("aiBaseUrlGroup");
+const aiBaseUrlInput = document.getElementById("aiBaseUrlInput");
+const aiConfigStatus = document.getElementById("aiConfigStatus");
 
 let pcaChartInstance = null;
 
@@ -43,6 +70,7 @@ const cohortColors = {
   "COAD": "#10b981", // Green
   "LUAD": "#f59e0b", // Orange
   "PRAD": "#8b5cf6"  // Purple
+
 };
 
 function showError(message) {
@@ -79,13 +107,15 @@ function clearPrediction() {
   state.patientCoords = null;
   state.chatHistory = [];
   
-  chatInput.disabled = true;
-  sendChatBtn.disabled = true;
+  if (state.attachedFiles.length === 0) {
+    chatInput.disabled = true;
+    sendChatBtn.disabled = true;
+  }
   chatInput.value = "";
   
   chatMessages.innerHTML = `
     <div class="chat-bubble model">
-      Hello! I am your AI clinical assistant. Load a sample and click **Predict** to populate its context. I can help you explain the prediction, identify key driving biomarkers, or interpret expression data.
+      Hello! I am your AI clinical assistant. Load a sample and click **Predict** to populate its context. You can also click 📎 to attach clinical pathology notes (.txt, .md), genomic variant files (.json), or expression tables (.csv, .tsv) for multi-modal synthesis.
     </div>
   `;
   
@@ -552,14 +582,29 @@ function updateChartColors() {
 
 // CHAT ASSISTANT
 let bubbleCounter = 0;
-function appendChatBubble(role, text) {
+function appendChatBubble(role, text, providerUsed = null, structuredInsights = null) {
   const bubbleId = `bubble-${bubbleCounter++}`;
   const bubble = document.createElement("div");
   bubble.className = `chat-bubble ${role}`;
   bubble.id = bubbleId;
 
   if (role === "model" && text !== "Analyzing...") {
-    bubble.innerHTML = formatMarkdown(text);
+    let contentHtml = "";
+    if (providerUsed) {
+      contentHtml += `<span class="provider-tag">${providerUsed}</span><br>`;
+    }
+    contentHtml += formatMarkdown(text);
+
+    if (structuredInsights && structuredInsights.ihc_recommendations && structuredInsights.ihc_recommendations.length > 0) {
+      const ihcTags = structuredInsights.ihc_recommendations.slice(0, 5).map(m => `<code>${m}</code>`).join(" ");
+      contentHtml += `
+        <div class="chat-structured-card">
+          <div class="card-title">🔬 Confirmatory IHC Recommendations</div>
+          <div>${ihcTags}</div>
+        </div>
+      `;
+    }
+    bubble.innerHTML = contentHtml;
   } else {
     bubble.textContent = text;
   }
@@ -579,10 +624,15 @@ function formatMarkdown(text) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
+    .replace(/^### (.*?)$/gm, '<h4 style="margin: 6px 0 4px; color: var(--accent);">$1</h4>')
+    .replace(/^## (.*?)$/gm, '<h3 style="margin: 8px 0 6px;">$1</h3>')
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.*?)\*/g, '<em>$1</em>')
     .replace(/`(.*?)`/g, '<code>$1</code>')
     .replace(/\n/g, '<br>');
+
+  // Format blockquotes / notices
+  html = html.replace(/(?:^|<br>)&gt;\s*(.*?)(?=<br>|$)/g, '<div class="chat-notice">$1</div>');
 
   // Format bullet lists
   html = html.replace(/(?:^|<br>)\s*-\s+(.*?)(?=<br>|$)/g, '<li>$1</li>');
@@ -594,23 +644,33 @@ function formatMarkdown(text) {
 
 async function sendChatMessage() {
   const message = chatInput.value.trim();
-  if (!message) return;
+  if (!message && state.attachedFiles.length === 0) return;
 
+  const userQuery = message || "Please interpret the attached file evidence in the clinical context.";
   chatInput.value = "";
-  appendChatBubble("user", message);
-  state.chatHistory.push({ role: "user", content: message });
+  appendChatBubble("user", userQuery);
+  const priorHistory = [...state.chatHistory];
+  state.chatHistory.push({ role: "user", content: userQuery });
 
   const loadingId = appendChatBubble("model", "Analyzing...");
 
   try {
+    const payloadBody = {
+      message: userQuery,
+      history: priorHistory,
+      prediction: state.currentPrediction,
+      attached_files: state.attachedFiles.map(f => ({
+        filename: f.filename,
+        content: f.content,
+        file_type: f.file_type
+      })),
+      provider_config: state.aiConfig
+    };
+
     const response = await fetch("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: message,
-        history: state.chatHistory,
-        prediction: state.currentPrediction
-      })
+      body: JSON.stringify(payloadBody)
     });
 
     const payload = await response.json();
@@ -619,8 +679,12 @@ async function sendChatMessage() {
     }
 
     removeChatBubble(loadingId);
-    appendChatBubble("model", payload.reply);
+    appendChatBubble("model", payload.reply, payload.provider_used, payload.structured_insights);
     state.chatHistory.push({ role: "model", content: payload.reply });
+
+    // Clear attached files after successful chat submission
+    state.attachedFiles = [];
+    renderAttachedFilesPreview();
   } catch (error) {
     removeChatBubble(loadingId);
     appendChatBubble("model", `Error: ${error.message}`);
@@ -633,6 +697,212 @@ chatInput.addEventListener("keydown", (e) => {
   }
 });
 sendChatBtn.addEventListener("click", sendChatMessage);
+
+// ATTACHED FILES HANDLING
+function setupChatAttachments() {
+  if (!attachFileBtn || !chatFileInput) return;
+
+  attachFileBtn.addEventListener("click", () => {
+    chatFileInput.click();
+  });
+
+  chatFileInput.addEventListener("change", async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+
+    for (const file of files) {
+      if (file.size > 5 * 1024 * 1024) {
+        showError(`File "${file.name}" exceeds maximum allowed size of 5 MB.`);
+        continue;
+      }
+
+      const ext = file.name.split(".").pop().toLowerCase();
+      try {
+        const textContent = await file.text();
+        state.attachedFiles.push({
+          filename: file.name,
+          content: textContent,
+          file_type: ext
+        });
+      } catch (err) {
+        showError(`Failed to read file ${file.name}: ${err.message}`);
+      }
+    }
+
+    chatFileInput.value = "";
+    renderAttachedFilesPreview();
+
+    // Enable chat input if files are attached
+    if (state.attachedFiles.length > 0) {
+      chatInput.disabled = false;
+      sendChatBtn.disabled = false;
+      chatInput.focus();
+    }
+  });
+}
+
+function renderAttachedFilesPreview() {
+  if (!attachedFilesPreview) return;
+  if (state.attachedFiles.length === 0) {
+    attachedFilesPreview.hidden = true;
+    attachedFilesPreview.innerHTML = "";
+    return;
+  }
+
+  attachedFilesPreview.hidden = false;
+  attachedFilesPreview.innerHTML = state.attachedFiles.map((f, idx) => `
+    <div class="file-attachment-chip" data-idx="${idx}">
+      <span class="file-chip-name" title="${f.filename}">📄 ${f.filename}</span>
+      <span class="file-chip-type">${f.file_type}</span>
+      <button type="button" class="file-chip-remove" data-idx="${idx}" title="Remove file">&times;</button>
+    </div>
+  `).join("");
+
+  attachedFilesPreview.querySelectorAll(".file-chip-remove").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.getAttribute("data-idx"), 10);
+      state.attachedFiles.splice(idx, 1);
+      renderAttachedFilesPreview();
+      if (state.attachedFiles.length === 0 && !state.currentPrediction) {
+        chatInput.disabled = true;
+        sendChatBtn.disabled = true;
+      }
+    });
+  });
+}
+
+// QUICK PROMPT ACTION CHIPS
+function setupQuickChips() {
+  document.querySelectorAll(".chip-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const prompt = btn.getAttribute("data-prompt");
+      chatInput.value = prompt;
+      if (!chatInput.disabled) {
+        sendChatMessage();
+      } else {
+        showError("Please load a patient profile or attach a clinical file first.");
+      }
+    });
+  });
+}
+
+// AI CONFIGURATION & MODAL
+function loadAiConfig() {
+  try {
+    const saved = localStorage.getItem("detectai_ai_config");
+    if (saved) {
+      state.aiConfig = Object.assign({}, state.aiConfig, JSON.parse(saved));
+    }
+  } catch (err) {
+    console.warn("Failed to load saved AI config:", err);
+  }
+  updateProviderBadge();
+}
+
+function updateProviderBadge() {
+  if (!activeProviderBadge) return;
+  const nameMap = {
+    offline: "Offline Bio-Agent",
+    gemini: "Google Gemini",
+    openai: "OpenAI",
+    anthropic: "Claude",
+    openai_compatible: "OpenAI-Compatible"
+  };
+  const providerKey = state.aiConfig.provider_name || "auto";
+  if (providerKey === "auto") {
+    const def = state.serverDefaultProvider || "offline";
+    activeProviderBadge.textContent = `${nameMap[def] || def} (Auto)`;
+  } else {
+    activeProviderBadge.textContent = nameMap[providerKey] || providerKey;
+  }
+}
+
+async function fetchAiProviders() {
+  try {
+    const res = await fetch("/ai/providers");
+    if (res.ok) {
+      const data = await res.json();
+      state.availableProviders = data.providers || [];
+      state.serverDefaultProvider = data.active_default || "offline";
+      updateProviderBadge();
+    }
+  } catch (err) {
+    console.warn("Could not fetch available AI providers:", err);
+  }
+}
+
+function updateAiModalFields() {
+  const selected = aiProviderSelect.value;
+  if (selected === "auto") {
+    apiKeyGroup.style.display = "none";
+    aiBaseUrlGroup.style.display = "none";
+    aiModelGroup.style.display = "none";
+  } else if (selected === "offline") {
+    apiKeyGroup.style.display = "none";
+    aiBaseUrlGroup.style.display = "none";
+    aiModelGroup.style.display = "none";
+  } else if (selected === "openai_compatible") {
+    apiKeyGroup.style.display = "block";
+    aiBaseUrlGroup.style.display = "block";
+    aiModelGroup.style.display = "block";
+  } else {
+    apiKeyGroup.style.display = "block";
+    aiBaseUrlGroup.style.display = "none";
+    aiModelGroup.style.display = "block";
+  }
+}
+
+function openAiModal() {
+  aiProviderSelect.value = state.aiConfig.provider_name || "auto";
+  aiApiKeyInput.value = state.aiConfig.api_key || "";
+  aiModelInput.value = state.aiConfig.model_name || "";
+  aiBaseUrlInput.value = state.aiConfig.base_url || "";
+  aiConfigStatus.style.display = "none";
+  updateAiModalFields();
+  aiSettingsModal.hidden = false;
+}
+
+function closeAiModal() {
+  aiSettingsModal.hidden = true;
+}
+
+function saveAiConfig() {
+  state.aiConfig = {
+    provider_name: aiProviderSelect.value,
+    api_key: aiApiKeyInput.value.trim(),
+    model_name: aiModelInput.value.trim(),
+    base_url: aiBaseUrlInput.value.trim()
+  };
+  localStorage.setItem("detectai_ai_config", JSON.stringify(state.aiConfig));
+  updateProviderBadge();
+  closeAiModal();
+}
+
+function resetAiConfig() {
+  state.aiConfig = {
+    provider_name: "auto",
+    api_key: "",
+    model_name: "",
+    base_url: ""
+  };
+  localStorage.removeItem("detectai_ai_config");
+  updateProviderBadge();
+  closeAiModal();
+}
+
+if (aiSettingsBtn) aiSettingsBtn.addEventListener("click", openAiModal);
+if (closeAiModalBtn) closeAiModalBtn.addEventListener("click", closeAiModal);
+if (saveAiSettingsBtn) saveAiSettingsBtn.addEventListener("click", saveAiConfig);
+if (resetAiSettingsBtn) resetAiSettingsBtn.addEventListener("click", resetAiConfig);
+if (aiProviderSelect) aiProviderSelect.addEventListener("change", updateAiModalFields);
+if (aiSettingsModal) {
+  aiSettingsModal.addEventListener("click", (e) => {
+    if (e.target === aiSettingsModal) closeAiModal();
+  });
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !aiSettingsModal.hidden) closeAiModal();
+  });
+}
 
 // THEME SELECTION
 function initTheme() {
@@ -654,5 +924,9 @@ themeToggleBtn.addEventListener("click", () => {
 
 // STARTUP
 initTheme();
+loadAiConfig();
+fetchAiProviders();
+setupChatAttachments();
+setupQuickChips();
 setupDropZone();
 refreshStatus().catch((error) => showError(error.message));

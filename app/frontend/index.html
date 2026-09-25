@@ -17,6 +17,7 @@
           <p id="statusText">Checking model artifacts...</p>
         </div>
         <div class="toolbar-actions">
+          <button id="aiSettingsBtn" class="secondary" type="button" title="Configure AI Provider & API Keys">⚙️ AI Settings</button>
           <button id="themeToggleBtn" class="secondary" type="button">🌙 Theme</button>
           <button id="reloadBtn" class="secondary" type="button">Reload</button>
         </div>
@@ -99,22 +100,89 @@
           </div>
         </section>
 
-        <!-- COLUMN 3: AI CLINICAL CHAT -->
+        <!-- COLUMN 3: AI CLINICAL CHAT & INTERPRETATION -->
         <section class="panel chat-panel">
-          <h2>AI Clinical Assistant</h2>
+          <div class="chat-header">
+            <h2>AI Clinical Assistant</h2>
+            <span id="activeProviderBadge" class="provider-pill">Offline Bio-Agent</span>
+          </div>
+
           <div id="chatMessages" class="chat-messages">
             <div class="chat-bubble model">
-              Hello! I am your AI clinical assistant. Load a sample and click **Predict** to populate its context. I can help you explain the prediction, identify key driving biomarkers, or interpret expression data.
+              Hello! I am your AI clinical assistant. Load a sample and click **Predict** to populate its context. You can also click 📎 to attach clinical pathology notes (.txt, .md), genomic variant files (.json), or expression tables (.csv, .tsv) for multi-modal synthesis.
             </div>
           </div>
+
+          <!-- Quick Action Chips -->
+          <div class="quick-chips">
+            <button class="chip-btn" type="button" data-prompt="Interpret the driving biomarkers and suppressed genes for this patient.">🧬 Biomarkers</button>
+            <button class="chip-btn" type="button" data-prompt="Analyze the attached file evidence and integrate with this prediction.">📄 Analyze File</button>
+            <button class="chip-btn" type="button" data-prompt="Generate a full clinical genomic report with confirmatory IHC recommendations.">📋 Report</button>
+            <button class="chip-btn" type="button" data-prompt="Perform an ambiguity check on cohort margins and low confidence alerts.">⚠️ Ambiguity</button>
+          </div>
+
+          <!-- Attached Files Preview Area -->
+          <div id="attachedFilesPreview" class="attached-files-preview" hidden></div>
+
+          <!-- Chat Input Container -->
           <div class="chat-input-container">
-            <input type="text" id="chatInput" placeholder="Ask about this prediction..." disabled>
+            <input type="file" id="chatFileInput" accept=".csv,.tsv,.txt,.md,.json" multiple hidden>
+            <button id="attachFileBtn" class="secondary icon-btn" type="button" title="Attach clinical note or expression file">📎</button>
+            <input type="text" id="chatInput" placeholder="Ask about prediction or attached files..." disabled>
             <button id="sendChatBtn" class="primary" type="button" disabled>Send</button>
           </div>
         </section>
       </div>
     </section>
   </main>
+
+  <!-- AI PROVIDER SETTINGS MODAL -->
+  <div id="aiSettingsModal" class="modal-backdrop" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="aiModalTitle">
+      <div class="modal-header">
+        <h3 id="aiModalTitle">⚙️ AI Provider Settings</h3>
+        <button id="closeAiModalBtn" class="modal-close" type="button" aria-label="Close modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">Configure your preferred AI reasoning engine. Keys are saved securely in your browser's local storage and passed with your requests.</p>
+        
+        <div class="form-group">
+          <label for="aiProviderSelect">AI Provider</label>
+          <select id="aiProviderSelect" class="dropdown-select">
+            <option value="auto">Auto-Detect (Server Default / Environment Keys)</option>
+            <option value="offline">Offline Clinical Bio-Agent (No API Keys / 100% Local)</option>
+            <option value="gemini">Google Gemini (Gemini 1.5 Flash / 2.0 Flash)</option>
+            <option value="openai">OpenAI (GPT-4o / GPT-4o-mini / o3-mini)</option>
+            <option value="anthropic">Anthropic Claude (Claude 3.5 Sonnet / Haiku)</option>
+            <option value="openai_compatible">OpenAI-Compatible (Ollama, Groq, vLLM, LMStudio)</option>
+          </select>
+        </div>
+
+        <div class="form-group" id="apiKeyGroup">
+          <label for="aiApiKeyInput">API Key</label>
+          <input type="password" id="aiApiKeyInput" placeholder="sk-... / AIza... (leave empty to use server env)">
+          <small class="form-hint">Leave blank if configured via environment variables on the server.</small>
+        </div>
+
+        <div class="form-group" id="aiModelGroup">
+          <label for="aiModelInput">Model Name (Optional)</label>
+          <input type="text" id="aiModelInput" placeholder="e.g. gpt-4o-mini, gemini-1.5-flash, llama3.2">
+        </div>
+
+        <div class="form-group" id="aiBaseUrlGroup" style="display: none;">
+          <label for="aiBaseUrlInput">Base URL</label>
+          <input type="text" id="aiBaseUrlInput" placeholder="http://localhost:11434/v1">
+          <small class="form-hint">For Ollama (http://localhost:11434/v1), Groq (https://api.groq.com/openai/v1), etc.</small>
+        </div>
+
+        <div id="aiConfigStatus" class="ai-config-status"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="resetAiSettingsBtn" class="secondary" type="button">Reset to Offline</button>
+        <button id="saveAiSettingsBtn" class="primary" type="button">Save Settings</button>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>
